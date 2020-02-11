@@ -4,7 +4,8 @@
 #include <time.h>
 
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
-#ifdef MAC
+
+#if defined __APPLE__
 #include <OpenCL/cl.h>
 #else
 #include <CL/cl.h>
@@ -14,7 +15,7 @@
 #define KERNEL_FUNC "mat_add"
 #define OUTPUT "output_cl.txt"
 
-#define SIZE 100
+#define SIZE 500
 
 void error(cl_int err, char* func_name)
 {
@@ -30,7 +31,7 @@ void populate(float m1[][SIZE], float m2[][SIZE])
 			m1[i][j] = 1.0f;
 			m2[i][j] = 2.0f;
 		}
-	}	
+	}
 }
 
 cl_device_id create_device(void)
@@ -39,8 +40,9 @@ cl_device_id create_device(void)
 	cl_device_id 	dev;
 	cl_int		err,
 			is_cpu=0;
-	size_t		size;
-	
+	size_t		size, max_dim;
+	char* 		name;
+
 	err = clGetPlatformIDs(1, &plat, NULL);
 	if (err < 0) error(err, "clGetPlatformIDs");
 
@@ -53,13 +55,33 @@ cl_device_id create_device(void)
 
 	err = clGetDeviceInfo(dev, CL_DEVICE_EXTENSIONS, 0, NULL, &size);
 	if (err < 0) error(err, "clGetDeviceInfo");
+	name = (char*)malloc(size);
 
-	char name[size];
 	err = clGetDeviceInfo(dev, CL_DEVICE_NAME, size, name, NULL);
 	if (err < 0) error(err, "clGetDeviceInfo");
 	printf("Device type: ");
 	printf(is_cpu > 0 ? "CPU" : "GPU");
 	printf("\nName: %s\n", name);
+	free(name);
+
+	err = clGetDeviceInfo(dev, CL_DEVICE_VERSION, 0, NULL, &size);
+	name = (char*)malloc(size);
+	clGetDeviceInfo(dev, CL_DEVICE_VERSION, size, name, NULL);
+	printf("CL version: %s\n", name);
+	free(name);
+
+	clGetDeviceInfo(dev, CL_DRIVER_VERSION, 0, NULL, &size);
+	name = (char*)malloc(size);
+	clGetDeviceInfo(dev, CL_DRIVER_VERSION, size, name, NULL);
+	printf("SW Driver version: %s\n", name);
+	free(name);
+
+	/* Get max work item dimension and sizes */
+	err = clGetDeviceInfo(dev, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS,
+		sizeof(cl_uint), &max_dim, NULL);
+	if (err < 0) error(err, "clGetDeviceInfo - Max work item dimension");
+	printf("Max work item dimensions: %ld\n", max_dim);
+
 
 	return dev;
 }
@@ -88,7 +110,7 @@ cl_program create_program(cl_context ctx)
 	fclose(hProgram);
 
 	/* Create program from a file */
-	program = clCreateProgramWithSource(ctx, 1, 
+	program = clCreateProgramWithSource(ctx, 1,
 		(const char**)&program_buff, &program_size, &err);
 	if (err < 0) error(err, "clCreateProgramWithSource");
 	free(program_buff);
@@ -152,16 +174,12 @@ int main(void)
 				res_buff;
 	/* Misc */
 	cl_int			err;
-	clock_t 		s, e, t;	
-	size_t			max_dim;
+	clock_t 		s, e, t;
 	size_t 			local_item_size,
 				global_item_size;
-	
+
 	local_item_size = 4;
-	global_item_size = 10000;
-
-
-
+	global_item_size = SIZE*SIZE;
 
 	/* Populate matrices */
 	populate(m1, m2);
@@ -171,11 +189,6 @@ int main(void)
 	context = clCreateContext(NULL, 1, &device, NULL, NULL, &err);
 	if (err < 0) error(err, "clCreateContext");
 
-	/* Get max work item dimension and sizes */	
-	err = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS,
-		sizeof(cl_uint), &max_dim, NULL);
-	if (err < 0) error(err, "clGetDeviceInfo - Max work item dimension");
-	
 	/* Create and build the program */
 	program = create_program(context);
 	program = build_program(program, context, device);
@@ -203,7 +216,7 @@ int main(void)
 		 m2, 0, NULL, NULL);
 	if (err < 0) error(err, "EnqueueWriteBuffer");
 
-	
+
 	/* Create Kernel */
 	kernel = clCreateKernel(program, KERNEL_FUNC, &err);
 	if (err < 0) error(err, "clCreateKernel");
@@ -214,13 +227,13 @@ int main(void)
 	err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &res_buff);
 	if (err < 0) error(err, "clSetKernelArg");
 
-	s = clock();	
+	s = clock();
 	/* Enqueue the command queue to device */
-	err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_item_size, 
+	err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_item_size,
 		&local_item_size, 0, NULL, NULL);
 	e = clock();
 	if (err < 0) error(err, "clEnqueueNDRangeKernel");
-	
+
 	t = (e-s);
 	printf("clock ticks: %ld\n", t);
 
