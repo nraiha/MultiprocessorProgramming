@@ -2,8 +2,8 @@
 #include <png.h>
 
 
-//#define CL_USE_DEPRECATED_OPENCL_1_2_APIS
-#define _CRT_SECURE_NO_WARNINGS
+#define CL_USE_DEPRECATED_OPENCL_1_2_APIS
+//#define _CRT_SECURE_NO_WARNINGS
 
 #if defined __APPLE__
 #include <OpenCL/cl.h>
@@ -32,9 +32,9 @@ cl_device_id create_device(void)
 
 	err = clGetPlatformIDs(1, &plat, NULL);
 	if (err < 0) error(err, "clGetPlatformIDs");
-	
+
 	err = clGetDeviceIDs(plat, CL_DEVICE_TYPE_GPU, 1, &dev, NULL);
-	if (err == CL_DEVICE_NOT_FOUND) 
+	if (err == CL_DEVICE_NOT_FOUND)
 		err = clGetDeviceIDs(plat, CL_DEVICE_TYPE_CPU, 1, &dev, NULL);
 	if (err < 0) error(err, "clGetDeviceIDs");
 	return dev;
@@ -47,7 +47,7 @@ cl_program build_program(cl_context ctx, cl_device_id dev, const char* name)
 	char *p_buffer, *p_log;
 	size_t p_size, log_size;
 	cl_int err;
-	
+
 	p_handle = fopen(name, "r");
 	if (p_handle == NULL) {
 		perror("Couldn't find the file");
@@ -130,14 +130,14 @@ void write_image_data(const char* filename, png_bytep data, size_t w, size_t h)
 			NULL, NULL, NULL);
 	png_infop info_ptr = png_create_info_struct(png_ptr);
 	png_init_io(png_ptr, png_output);
-	png_set_IHDR(png_ptr, info_ptr, w, h, 16, PNG_COLOR_TYPE_GRAY, 
-			PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, 
+	png_set_IHDR(png_ptr, info_ptr, w, h, 16, PNG_COLOR_TYPE_GRAY,
+			PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE,
 			PNG_FILTER_TYPE_BASE);
 	png_write_info(png_ptr, info_ptr);
-	for (i=0; i<h; i++) 
-		png_write_row(png_ptr, data+i * 
+	for (i=0; i<h; i++)
+		png_write_row(png_ptr, data+i *
 				png_get_rowbytes(png_ptr, info_ptr));
-	
+
 	png_write_end(png_ptr, NULL);
 	png_destroy_write_struct(&png_ptr, &info_ptr);
 	fclose(png_output);
@@ -157,7 +157,7 @@ int main(void)
 	size_t 		 global_size[2];
 
 	/* Image data */
-	png_bytep 	 input_pixels, 
+	png_bytep 	 input_pixels,
 			 output_pixels;
 	cl_image_format  png_format;
 	cl_mem		 input_img,
@@ -180,19 +180,43 @@ int main(void)
 	if (err < 0) error(err, "clCreateKernel");
 
 	/* input image object */
-	png_format.image_channel_order = CL_LUMINANCE;
+	png_format.image_channel_order = CL_RGBA;
 	png_format.image_channel_data_type = CL_UNORM_INT16;
-	input_img = clCreateImage2D(ctx, CL_MEM_READ_ONLY | 
+#if 0
+	input_img = clCreateImage2D(ctx, CL_MEM_READ_ONLY |
 			CL_MEM_COPY_HOST_PTR, &png_format, width, height,
 			0, (void*)input_pixels, &err);
 	if (err < 0) error(err, "clCreateImage2D - input");
-	
-	output_img = clCreateImage2D(ctx, CL_MEM_WRITE_ONLY, &png_format, 
+
+	output_img = clCreateImage2D(ctx, CL_MEM_WRITE_ONLY, &png_format,
 			width, height, 0, NULL, &err);
 	if (err < 0) error(err, "clCreateImage2D - output");
+#else
 
-	/* Buffer */
-	
+	/* Image */
+	cl_image_desc image_desc;
+	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+	image_desc.image_width = width;
+	image_desc.image_height = height;
+	image_desc.image_depth = 1;
+	image_desc.image_array_size = 1;
+	image_desc.image_row_pitch = 0;
+	image_desc.image_slice_pitch = 0;
+	image_desc.num_mip_levels = 0;
+	image_desc.num_samples = 0;
+	image_desc.buffer = NULL;
+
+
+	input_img = clCreateImage(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+			&png_format, &image_desc, (void *)input_pixels, &err);
+	if (err < 0) error(err, "clCreateImage - input");
+
+	output_img = clCreateImage(ctx, CL_MEM_WRITE_ONLY, &png_format,
+			&image_desc, NULL, &err);
+	if (err < 0) error(err, "clCreateImage - output");
+
+#endif
+
 	/* Kernel args */
 	err = clSetKernelArg(g_kernel, 0, sizeof(cl_mem), &input_img);
 	err |= clSetKernelArg(g_kernel, 1, sizeof(cl_mem), &input_img);
@@ -205,7 +229,7 @@ int main(void)
 	/* Enqueue kernel */
 	global_size[0] = width;
 	global_size[1] = height;
-	err = clEnqueueNDRangeKernel(queue, g_kernel, 2, NULL, global_size, 
+	err = clEnqueueNDRangeKernel(queue, g_kernel, 2, NULL, global_size,
 		NULL, 0, NULL, NULL);
 	if (err < 0) error(err, "clEnqueueNDRangeKernel");
 

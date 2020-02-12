@@ -3,7 +3,7 @@ __constant sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
 				CLK_FILTER_LINEAR;
 
 __kernel void
-grayscale(__read_only image2d_t input, __write_only iamge2d_t output)
+grayscale(__read_only image2d_t input, __write_only image2d_t output)
 {
 	int2 gid = (int2)(get_global_id(0), get_global_id(1));
 	int2 size = get_image_dim(input);
@@ -18,9 +18,11 @@ grayscale(__read_only image2d_t input, __write_only iamge2d_t output)
 	}
 }
 
+#if 0
 __kernel void
 moving_average()
 {
 	int 2 gid = (int2)(get_global_id(0), get_global_id(2));
 	int2 size = get_image_dim(input);
 }
+#endif
