@@ -1,9 +1,7 @@
 #include <stdio.h>
 #include <png.h>
 
-
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
-//#define _CRT_SECURE_NO_WARNINGS
 
 #if defined __APPLE__
 #include <OpenCL/cl.h>
@@ -104,8 +102,8 @@ void read_image(const char* filename, png_bytep* input, png_bytep* output,
 	*height = png_get_image_height(png_ptr, info_ptr);
 
 	/* Alloc memory for input and output. Initialize data */
-	*input = malloc(*height * png_get_rowbytes(png_ptr, info_ptr));
-	*output = malloc(*height * png_get_rowbytes(png_ptr, info_ptr));
+	*input = malloc(*height * png_get_rowbytes(png_ptr, info_ptr)*2);
+	*output = malloc(*height * png_get_rowbytes(png_ptr, info_ptr)*2);
 	for (i=0; i<*height; i++)
 		png_read_row(png_ptr, *input + i *
 			png_get_rowbytes(png_ptr, info_ptr), NULL);
@@ -181,17 +179,7 @@ int main(void)
 
 	/* input image object */
 	png_format.image_channel_order = CL_RGBA;
-	png_format.image_channel_data_type = CL_UNORM_INT16;
-#if 0
-	input_img = clCreateImage2D(ctx, CL_MEM_READ_ONLY |
-			CL_MEM_COPY_HOST_PTR, &png_format, width, height,
-			0, (void*)input_pixels, &err);
-	if (err < 0) error(err, "clCreateImage2D - input");
-
-	output_img = clCreateImage2D(ctx, CL_MEM_WRITE_ONLY, &png_format,
-			width, height, 0, NULL, &err);
-	if (err < 0) error(err, "clCreateImage2D - output");
-#else
+	png_format.image_channel_data_type = CL_UNSIGNED_INT16;
 
 	/* Image */
 	cl_image_desc image_desc;
@@ -206,16 +194,13 @@ int main(void)
 	image_desc.num_samples = 0;
 	image_desc.buffer = NULL;
 
-
-	input_img = clCreateImage(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-			&png_format, &image_desc, (void *)input_pixels, &err);
+	input_img = clCreateImage(ctx, CL_MEM_READ_ONLY, &png_format, 
+			&image_desc, input_pixels, &err);
 	if (err < 0) error(err, "clCreateImage - input");
 
 	output_img = clCreateImage(ctx, CL_MEM_WRITE_ONLY, &png_format,
 			&image_desc, NULL, &err);
 	if (err < 0) error(err, "clCreateImage - output");
-
-#endif
 
 	/* Kernel args */
 	err = clSetKernelArg(g_kernel, 0, sizeof(cl_mem), &input_img);
@@ -231,7 +216,7 @@ int main(void)
 	global_size[1] = height;
 	err = clEnqueueNDRangeKernel(queue, g_kernel, 2, NULL, global_size,
 		NULL, 0, NULL, NULL);
-	if (err < 0) error(err, "clEnqueueNDRangeKernel");
+	if (err < 0) error(err, "clEnqueueNDRangeKernel");	
 
 	origin[0] = 0;
 	origin[1] = 0;
@@ -247,7 +232,7 @@ int main(void)
 	write_image_data(OUTPUT, output_pixels, width, height);
 
 	/* Dealloc */
-	free(input_pixels);
+	//free(input_pixels);
 	free(output_pixels);
 	clReleaseMemObject(input_img);
 	clReleaseMemObject(output_img);
