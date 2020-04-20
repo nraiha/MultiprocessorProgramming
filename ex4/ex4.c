@@ -1,7 +1,7 @@
 #include <stdio.h>
-#include <png.h>
+#include <math.h>
+#include "lodepng.h"
 
-#define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 
 #if defined __APPLE__
 #include <OpenCL/cl.h>
@@ -9,12 +9,11 @@
 #include <CL/cl.h>
 #endif
 
-#define PROGRAM_FILE "ex4.cl"
-#define KERNEL_FUNC1 "grayscale"
-#define KERNEL_FUNC2 "moving_avg"
+#define PROGRAM "ex4.cl"
+#define FUNC "moving_avg"
 
-#define IMAGE "image.png"
-#define OUTPUT "output_image.png"
+#define INPUT "image.png"
+#define OUTPUT "output.png"
 
 void error(cl_int err, char* func_name)
 {
@@ -41,10 +40,12 @@ cl_device_id create_device(void)
 cl_program build_program(cl_context ctx, cl_device_id dev, const char* name)
 {
 	cl_program program;
-	FILE *p_handle;
-	char *p_buffer, *p_log;
-	size_t p_size, log_size;
-	cl_int err;
+	FILE 	   *p_handle;
+	char 	   *p_buffer;
+	char 	   *p_log;
+	size_t 	   p_size;
+	size_t 	   log_size;
+	cl_int 	   err;
 
 	p_handle = fopen(name, "r");
 	if (p_handle == NULL) {
@@ -76,170 +77,135 @@ cl_program build_program(cl_context ctx, cl_device_id dev, const char* name)
 		free(p_log);
 		exit(1);
 	}
+
 	return program;
 }
 
 
 
-void read_image(const char* filename, png_bytep* input, png_bytep* output,
-		size_t* width, size_t* height)
+unsigned char* read_image(unsigned* width, unsigned* height)
 {
-	int i;
-	FILE *png_input;
-	png_input = fopen(filename, "rb");
-	if (png_input == NULL) {
-		perror("Error reading image file");
-		exit(1);
+	unsigned error;
+	unsigned char* image=0;
+
+	error = lodepng_decode_file(&image, width, height, INPUT, LCT_GREY, 8);
+	if (error) {
+		printf("Error %u: %s\n", error, lodepng_error_text(error));
+		return NULL;
 	}
-
-	/* Read image data */
-	png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING,
-			NULL, NULL, NULL);
-	png_infop info_ptr = png_create_info_struct(png_ptr);
-	png_init_io(png_ptr, png_input);
-	png_read_info(png_ptr, info_ptr);
-	*width = png_get_image_width(png_ptr, info_ptr);
-	*height = png_get_image_height(png_ptr, info_ptr);
-
-	/* Alloc memory for input and output. Initialize data */
-	*input = malloc(*height * png_get_rowbytes(png_ptr, info_ptr)*2);
-	*output = malloc(*height * png_get_rowbytes(png_ptr, info_ptr)*2);
-	for (i=0; i<*height; i++)
-		png_read_row(png_ptr, *input + i *
-			png_get_rowbytes(png_ptr, info_ptr), NULL);
-
-	png_read_end(png_ptr, info_ptr);
-	png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp)NULL);
-	fclose(png_input);
+	return image;
 }
 
-void write_image_data(const char* filename, png_bytep data, size_t w, size_t h)
+void write_image(unsigned char* image, unsigned width, unsigned height)
 {
-	int i;
-	FILE *png_output;
-	png_output = fopen(filename, "wb");
-	if (png_output == NULL) {
-		perror("Create output file failed");
-		exit(1);
-	}
-
-	/* Write image data */
-	png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING,
-			NULL, NULL, NULL);
-	png_infop info_ptr = png_create_info_struct(png_ptr);
-	png_init_io(png_ptr, png_output);
-	png_set_IHDR(png_ptr, info_ptr, w, h, 16, PNG_COLOR_TYPE_GRAY,
-			PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE,
-			PNG_FILTER_TYPE_BASE);
-	png_write_info(png_ptr, info_ptr);
-	for (i=0; i<h; i++)
-		png_write_row(png_ptr, data+i *
-				png_get_rowbytes(png_ptr, info_ptr));
-
-	png_write_end(png_ptr, NULL);
-	png_destroy_write_struct(&png_ptr, &info_ptr);
-	fclose(png_output);
+	unsigned error;
+	error = lodepng_encode_file(OUTPUT, image, width, height, LCT_GREY, 8);
+	if (error)
+		printf("Error %u: %s\n", error, lodepng_error_text(error));
 }
 
 
 int main(void)
 {
-	/* Host/device */
-	cl_device_id 	 dev = NULL;
-	cl_context  	 ctx = NULL;
-	cl_command_queue queue = NULL;
-	cl_program  	 prog = NULL;
-	cl_kernel	 g_kernel = NULL/*;
-			 mavg_kernel = NULL*/;
+	/* For LodePNG */
+	unsigned char* 	 image = 0;
+	unsigned char*   image_out = 0;
+	unsigned 	 width;
+	unsigned 	 height;
+	size_t 	 	 buff_size;
+
+	/* For openCL */
+	cl_device_id 	 device;
+	cl_context	 context;
+	size_t		 local_item_size;
+	size_t		 global_item_size;
+
+	cl_program	 program;
+	cl_kernel	 kernel;
+
+	cl_command_queue queue;
+
+	cl_mem		 buff_in;
+	cl_mem		 buff_out;
+
 	cl_int 		 err;
-	size_t 		 global_size[2];
 
-	/* Image data */
-	png_bytep 	 input_pixels,
-			 output_pixels;
-	cl_image_format  png_format;
-	cl_mem		 input_img,
-			 output_img;
-	size_t 		 width,
-			 height;
-	size_t		 origin[3],
-			 region[3];
 
-	read_image(IMAGE, &input_pixels, &output_pixels, &width, &height);
+	/* Read image as grayscale and get the size of the image buffer */
+	image = read_image(&width, &height);
+	if (image == NULL) {
+		printf("Could not read image!\n");
+		exit(1);
+	}
+	buff_size = width * height * 4 * sizeof(unsigned char);
 
-	/* Device and context */
-	dev = create_device();
-	ctx = clCreateContext(NULL, 1, &dev, NULL, NULL, &err);
+
+	/* openCL: create Device, context and work items */
+	device = create_device();
+	context = clCreateContext(NULL, 1, &device, NULL, NULL, &err);
 	if (err < 0) error(err, "clCreateContext");
+	local_item_size = 64;
+	global_item_size =
+		ceil(buff_size/(float)local_item_size)*local_item_size;
 
-	/* Kernel and program */
-	prog = build_program(ctx, dev, PROGRAM_FILE);
-	g_kernel = clCreateKernel(prog, KERNEL_FUNC1, &err);
+
+	/* openCL: create kernel and program */
+	program = build_program(context, device, PROGRAM);
+	kernel = clCreateKernel(program, FUNC, &err);
 	if (err < 0) error(err, "clCreateKernel");
 
-	/* input image object */
-	png_format.image_channel_order = CL_RGBA;
-	png_format.image_channel_data_type = CL_UNSIGNED_INT16;
-
-	/* Image */
-	cl_image_desc image_desc;
-	image_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
-	image_desc.image_width = width;
-	image_desc.image_height = height;
-	image_desc.image_depth = 1;
-	image_desc.image_array_size = 1;
-	image_desc.image_row_pitch = 0;
-	image_desc.image_slice_pitch = 0;
-	image_desc.num_mip_levels = 0;
-	image_desc.num_samples = 0;
-	image_desc.buffer = NULL;
-
-	input_img = clCreateImage(ctx, CL_MEM_READ_ONLY, &png_format, 
-			&image_desc, input_pixels, &err);
-	if (err < 0) error(err, "clCreateImage - input");
-
-	output_img = clCreateImage(ctx, CL_MEM_WRITE_ONLY, &png_format,
-			&image_desc, NULL, &err);
-	if (err < 0) error(err, "clCreateImage - output");
-
-	/* Kernel args */
-	err = clSetKernelArg(g_kernel, 0, sizeof(cl_mem), &input_img);
-	err |= clSetKernelArg(g_kernel, 1, sizeof(cl_mem), &input_img);
-	if (err < 0) error(err, "clSetKernelArg");
-
-	/* Command queue */
-	queue = clCreateCommandQueue(ctx, dev, 0, &err);
+	/* openCL: create command queue */
+	queue = clCreateCommandQueue(context, device, 0, &err);
 	if (err < 0) error(err, "clCreateCommandQueue");
 
-	/* Enqueue kernel */
-	global_size[0] = width;
-	global_size[1] = height;
-	err = clEnqueueNDRangeKernel(queue, g_kernel, 2, NULL, global_size,
-		NULL, 0, NULL, NULL);
-	if (err < 0) error(err, "clEnqueueNDRangeKernel");	
 
-	origin[0] = 0;
-	origin[1] = 0;
-	origin[2] = 0;
-	region[0] = width;
-	region[1] = height;
-	region[2] = 1;
-	err = clEnqueueReadImage(queue, output_img, CL_TRUE, origin, region,
-		0, 0, (void*)output_pixels, 0, NULL, NULL);
-	if (err < 0) error(err, "clEnqueueReadImage");
+	/* openCL: create buffers */
+	buff_in = clCreateBuffer(context, CL_MEM_READ_ONLY |
+			CL_MEM_COPY_HOST_PTR, buff_size, image, &err);
+	if (err < 0) error(err, "clCreateBuffer (buff_in)");
+	buff_out = clCreateBuffer(context, CL_MEM_WRITE_ONLY, buff_size, NULL,
+			&err);
+	if (err < 0) error(err, "clCreateBuffer (buff_out)");
 
-	/* Create output image */
-	write_image_data(OUTPUT, output_pixels, width, height);
 
-	/* Dealloc */
-	//free(input_pixels);
-	free(output_pixels);
-	clReleaseMemObject(input_img);
-	clReleaseMemObject(output_img);
-	clReleaseKernel(g_kernel);
+	/* openCL - kernel arguments */
+	err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &buff_in);
+	if (err < 0) error(err, "clSetKernelArg 0");
+	err = clSetKernelArg(kernel, 1, sizeof(cl_mem), &buff_out);
+	if (err < 0) error(err, "clSetKernelArg 1");
+	err = clSetKernelArg(kernel, 2, sizeof(unsigned), (void*)&width);
+	if (err < 0) error(err, "clSetKernelArg 2");
+	err = clSetKernelArg(kernel, 3, sizeof(unsigned), (void*)&height);
+	if (err < 0) error(err, "clSetKernelArg 3");
+
+
+	/* openCL - execute the kernel */
+	err = clEnqueueNDRangeKernel(queue, kernel, CL_TRUE, NULL,
+			&global_item_size, &local_item_size, 0, NULL, NULL);
+	if (err < 0) error(err, "clEnqueueNDRangeKernel");
+
+
+	/* openCL - copy image back from the device */
+	image_out = (unsigned char*) malloc(buff_size);
+	err = clEnqueueReadBuffer(queue, buff_out, CL_TRUE, 0, buff_size,
+			image_out, 0, NULL, NULL);
+	if (err < 0) error(err, "clEnqueueNDRangeKernel");
+
+
+	/* write image with lodepng */
+	write_image(image_out, width, height);
+
+
+	clReleaseKernel(kernel);
+	clReleaseProgram(program);
+	clReleaseMemObject(buff_in);
+	clReleaseMemObject(buff_out);
 	clReleaseCommandQueue(queue);
-	clReleaseProgram(prog);
-	clReleaseContext(ctx);
+	clReleaseContext(context);
+
+	free(image);
+	free(image_out);
+
 	return 0;
 }
 
