@@ -6,10 +6,25 @@
 
 #define MAX_DISP 64
 #define MIN_DISP 0
-#define WIN_W 2
-#define WIN_H 2
+#define WIN_W 18
+#define WIN_H 14
 #define WIN_PIXELS WIN_W*WIN_H
-#define THRESHOLD 8
+#define THRESHOLD 12
+
+/* Prototypes */
+void calc_zncc(unsigned char* il, unsigned char* ir, unsigned int w,
+		unsigned int h, int disp_min, int disp_max,
+		unsigned char* disp_map);
+
+void cross_checking(unsigned char* left, unsigned char* right,
+		unsigned int size, unsigned char* out);
+
+void occlusion_filling(unsigned char* res, unsigned int size);
+
+void normalize(unsigned char* res, unsigned int size);
+
+
+
 
 void calc_zncc(unsigned char* il, unsigned char* ir, unsigned int w,
 		unsigned int h, int disp_min, int disp_max,
@@ -18,51 +33,44 @@ void calc_zncc(unsigned char* il, unsigned char* ir, unsigned int w,
 	float cur_max;
 	float sum_left;
 	float sum_right;
-	float mean_left;
-	float mean_right;
-
+	int idx_l;
+	int idx_r;
 	float nominator=0;
 	float denominator1=0;
 	float denominator2=0;
 	float center_left;
 	float center_right;
 	float zncc;
-
 	int disp_best=0;
-	int i;
-	int j;
-	int d;
-	int win_x;
-	int win_y;
 
-	for (i=0; i<h; i++) {
-	for (j=0; j<w; j++) {
+	for (int i=0; i<h; i++) {
+	for (int j=0; j<w; j++) {
 		cur_max = -1;
 		disp_best = disp_max;
 
-	for (d=disp_min; d<=disp_max; d++) {
+	for (int d=disp_min; d<=disp_max; d++) {
 		/*
 		 * Calculate the mean
 		 */
-		sum_left = sum_right = 0;
-		for (win_x=-WIN_H/2; win_x<WIN_H/2; win_x++) {
-		for (win_y=-WIN_W/2; win_y<WIN_W/2; win_y++) {
-
+		sum_left = 0;
+		sum_right = 0;
+		for (int win_x=-WIN_H/2; win_x<WIN_H/2; win_x++) {
+		for (int win_y=-WIN_W/2; win_y<WIN_W/2; win_y++) {
 			/* Border checking */
-			if (!(i+win_x >= 0) || !(i+win_x < h) ||
-					!(j+win_y < w)  || !(j+win_y-d >= 0) ||
-					!(j+win_y-d < w) || !(j+win_y >= 0))
-				continue;
+                         if (i+win_x < 0     || i+win_x >= h ||
+			     j+win_y < 0     || j+win_y >= w ||
+			     j+win_y-d < 0   || j+win_y-d >= w)
+				 continue;
 
-			sum_left += il[w * (i+win_x) +j+win_y];
-			sum_right += ir[w * (i+win_x) +j+win_y-d];
+			idx_l = w * (i+win_x) +j+win_y;
+			idx_r = w *(i+win_x)+j+win_y-d;
+
+			sum_left += il[idx_l];
+			sum_right += ir[idx_r];
 		}
 		}
-
-
-		mean_left = sum_left / WIN_PIXELS;
-		mean_right = sum_right / WIN_PIXELS;
-
+		sum_left /= WIN_PIXELS;
+		sum_right /= WIN_PIXELS;
 
 		/*
 		 * Calcucate ZNCC
@@ -71,16 +79,18 @@ void calc_zncc(unsigned char* il, unsigned char* ir, unsigned int w,
 		denominator1 = 0;
 		denominator2 = 0;
 
-		for (win_x=-WIN_H/2; win_x<WIN_H/2; win_x++) {
-		for (win_y=-WIN_W/2; win_y<WIN_W/2; win_y++) {
+		for (int win_x=-WIN_H/2; win_x<WIN_H/2; win_x++) {
+		for (int win_y=-WIN_W/2; win_y<WIN_W/2; win_y++) {
 			/* Border checking */
-			if (!(i+win_x >= 0) || !(i+win_x < h) ||
-					!(j+win_y < w) || !(j+win_y-d >= 0) ||
-					!(j+win_y-d < w) || !(j+win_y >= 0))
-				continue;
+                        if (i+win_x < 0     || i+win_x >= h ||
+                            j+win_y < 0     || j+win_y >= w ||
+                            j+win_y-d < 0   || j+win_y-d >= w)
+                            continue;
+			idx_l = w * (i+win_x) +j+win_y;
+			idx_r = w *(i+win_x)+j+win_y-d;
 
-			center_left = il[w * (i+win_x) +j+win_y] - mean_left;
-			center_right = ir[w *(i+win_x)+j+win_y-d] - mean_right;
+			center_left = il[idx_l] - sum_left;
+			center_right = ir[idx_r] - sum_right;
 
 			nominator += center_left * center_right;
 			denominator1 += pow(center_left, 2);
@@ -138,6 +148,10 @@ void normalize(unsigned char* res, unsigned int size)
 	}
 
 	for (i=0; i<size; i++) {
+		if(max-min == 0) {
+			res[i] = 0;
+			continue;
+		}
 		res[i] = (unsigned char) (255*(res[i]-min)/(max-min));
 	}
 }
@@ -145,7 +159,6 @@ void normalize(unsigned char* res, unsigned int size)
 
 int main(void)
 {
-
 	const char* inL = "imageL.png";
 	const char* inR = "imageR.png";
 	const char* out = "output.png";
@@ -180,19 +193,22 @@ int main(void)
 	disp_r2l = calloc(size, sizeof(unsigned char));
 
 	/* Calculate ZNCC */
+	printf("Calculating L2R\n");
 	calc_zncc(imageL, imageR, w, h, MIN_DISP, MAX_DISP, disp_l2r);
+	printf("Calculating R2L\n");
 	calc_zncc(imageR, imageL, w, h, -MAX_DISP, MIN_DISP, disp_r2l);
-
 	res = calloc(size, sizeof(unsigned char));
+
+	printf("Post-processing...\n");
 
 	/* Cross checking */
 	cross_checking(disp_l2r, disp_r2l, size, res);
-
 	/* Occlusion filling */
 	occlusion_filling(res, size);
-
 	/* Normalize */
 	normalize(res, size);
+
+	printf("Done, creating the output image\n");
 	lodepng_encode_file(out, res, w, h, LCT_GREY, 8);
 
 	free(imageL);
@@ -200,7 +216,6 @@ int main(void)
 	free(disp_l2r);
 	free(disp_r2l);
 	free(res);
-
 	return 0;
 
 }
