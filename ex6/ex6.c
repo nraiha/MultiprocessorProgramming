@@ -54,16 +54,16 @@ void calc_zncc(unsigned char* il, unsigned char* ir, unsigned int w,
 		 */
 		sum_left = 0;
 		sum_right = 0;
-		for (int win_x=-WIN_H/2; win_x<WIN_H/2; win_x++) {
-		for (int win_y=-WIN_W/2; win_y<WIN_W/2; win_y++) {
+		for (int win_y=-WIN_H/2; win_y<WIN_H/2; win_y++) {
+		for (int win_x=-WIN_W/2; win_x<WIN_W/2; win_x++) {
 			/* Border checking */
-                         if (i+win_x < 0     || i+win_x >= h ||
-			     j+win_y < 0     || j+win_y >= w ||
-			     j+win_y-d < 0   || j+win_y-d >= w)
+                         if (i+win_y < 0     || i+win_y >= h ||
+			     j+win_x < 0     || j+win_x >= w ||
+			     j+win_x-d < 0   || j+win_x-d >= w)
 				 continue;
 
-			idx_l = w * (i+win_x) +j+win_y;
-			idx_r = w *(i+win_x)+j+win_y-d;
+			idx_l = w * (i+win_y) +j+win_x;
+			idx_r = w *(i+win_y)+j+win_x-d;
 
 			sum_left += il[idx_l];
 			sum_right += ir[idx_r];
@@ -79,15 +79,15 @@ void calc_zncc(unsigned char* il, unsigned char* ir, unsigned int w,
 		denominator1 = 0;
 		denominator2 = 0;
 
-		for (int win_x=-WIN_H/2; win_x<WIN_H/2; win_x++) {
-		for (int win_y=-WIN_W/2; win_y<WIN_W/2; win_y++) {
+		for (int win_y=-WIN_H/2; win_y<WIN_H/2; win_y++) {
+		for (int win_x=-WIN_W/2; win_x<WIN_W/2; win_x++) {
 			/* Border checking */
-                        if (i+win_x < 0     || i+win_x >= h ||
-                            j+win_y < 0     || j+win_y >= w ||
-                            j+win_y-d < 0   || j+win_y-d >= w)
+                        if (i+win_y < 0     || i+win_y >= h ||
+                            j+win_x < 0     || j+win_x >= w ||
+                            j+win_x-d < 0   || j+win_x-d >= w)
                             continue;
-			idx_l = w * (i+win_x) +j+win_y;
-			idx_r = w *(i+win_x)+j+win_y-d;
+			idx_l = w * (i+win_y) +j+win_x;
+			idx_r = w *(i+win_y)+j+win_x-d;
 
 			center_left = il[idx_l] - sum_left;
 			center_right = ir[idx_r] - sum_right;
