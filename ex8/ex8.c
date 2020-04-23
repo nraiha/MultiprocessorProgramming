@@ -379,6 +379,7 @@ int main(void)
 	if (err < 0) error(err, "clGetEventProfilingInfo e1 end");
 
 	total = (end - start) / 1000000.0;
+	printf("1st run: %0.3f ms\n", total);
 
 
 	err = clGetEventProfilingInfo(event2, CL_PROFILING_COMMAND_START,
@@ -389,6 +390,8 @@ int main(void)
 			sizeof(end), &end, NULL);	
 	if (err < 0) error(err, "clGetEventProfilingInfo e2 end");
 	total += (end - start) / 1000000.0;
+	printf("2nd run: %0.3f ms\n", (end-start)/1000000.0);
+
 
 	printf("ZNCC kernel execution time: %0.3f ms\n", total);
 
