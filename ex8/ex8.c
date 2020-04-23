@@ -1,6 +1,12 @@
-#include "lodepng.h"
-#include <OpenCL/cl.h>
 #include <stdio.h>
+#include <math.h>
+#include "lodepng.h"
+#ifdef __APPLE__
+#include <OpenCL/cl.h>
+#else
+#include <CL/cl.h>
+#endif
+
 
 #define PROGRAM "ex8.cl"
 #define F_ZNCC "calc_zncc"
@@ -11,12 +17,14 @@
 #define THRESHOLD 12
 
 
-
-
 void error(cl_int err, char* func_name);
 cl_device_id create_device(void);
 cl_program build_program(cl_context ctx, cl_device_id dev, const char* name);
 unsigned char* read_image(unsigned* width, unsigned* height, const char* name);
+void cross_checking(unsigned char* l2r, unsigned char* r2l, unsigned int size,
+	unsigned char* out);
+void occlusion_filling(unsigned char* res, unsigned int size);
+void normalize(unsigned char* res, unsigned int size);
 
 
 void error(cl_int err, char* func_name)
@@ -24,6 +32,52 @@ void error(cl_int err, char* func_name)
 	printf("Error %d in %s\n", err, func_name);
 	exit(1);
 }
+
+void cross_checking(unsigned char* l2r, unsigned char* r2l, unsigned int size,
+		unsigned char* out)
+{
+	int i;
+	for (i=0; i<size; i++) {
+		if (abs(l2r[i] - r2l[i]) > THRESHOLD)
+			out[i] = 0;
+		else 
+			out[i] = l2r[i];
+	}
+}
+
+void occlusion_filling(unsigned char* res, unsigned int size)
+{
+	int i;
+	int nn_color = 0;
+	for (i=0; i<size; i++) {
+		if (res[i] == 0)
+			res[i] = nn_color;
+		else
+			nn_color = res[i];
+	}	
+}
+
+void normalize(unsigned char* res, unsigned int size)
+{
+	int i;
+	unsigned char max=0;
+	unsigned char min=255;
+	for (i=0; i<size; i++) {
+		if (res[i] > max)
+			max = res[i];
+		if (res[i] < min)
+			min = res[i];
+	}
+
+	for (i=0; i<size; i++) {
+		if (max-min == 0) {
+			res[i] = 0;
+			continue;
+		}
+		res[i] = (unsigned char) (255 * (res[i]-min)/(max-min));
+	}
+}
+
 
 cl_device_id create_device(void)
 {
@@ -104,7 +158,7 @@ int main(void)
 {
 	const char* inL = "imageL.png";
 	const char* inR = "imageR.png";
-	//const char* out = "output.png";
+	const char* out = "output.png";
 
 	unsigned char* imageL=0;
 	unsigned char* imageR=0;
@@ -204,7 +258,8 @@ int main(void)
 	 *	QUEUE
 	 *
 	 *****************************/
-	queue = clCreateCommandQueue(context, device, 0, &err);
+	queue = clCreateCommandQueue(context, device, 
+		CL_QUEUE_PROFILING_ENABLE, &err);
 	if (err < 0) error(err, "clCreateCommandQueue");
 
 
@@ -231,7 +286,7 @@ int main(void)
 	buff_out_r2l = clCreateBuffer(context, CL_MEM_WRITE_ONLY, buff_size,
 			NULL, &err);
 	if (err < 0) error(err, "ClCreateBuffer (buff_out_r2l");
-#if 0
+
 
 	/*****************************
 	 *
@@ -258,20 +313,9 @@ int main(void)
 	 *****************************/
 	err = clEnqueueNDRangeKernel(queue, zncc_kernel, 2, NULL,
 			global_item_size, NULL, 0, NULL, &event1);
-	if (err < 0 ) error(err, "clEnqueueNDRangeKernel - zncc");
-	clFinish(queue);
+	if (err < 0 ) error(err, "clEnqueueNDRangeKernel - zncc");	
 
 
-	/*****************************
-	 *
-	 *	BUFFER BACK TO HOST
-	 *
-	 *****************************/
-	err = clEnqueueReadBuffer(queue, buff_out_l2r, CL_TRUE, 0, size, d_l2r,
-			0, NULL, NULL);
-	if (err < 0) error(err, "clEnqueueReadBuffer");
-
-#endif
 	/*****************************
 	 *
 	 *	KERNEL ARGS - R2L
@@ -304,7 +348,17 @@ int main(void)
 
 	/*****************************
 	 *
-	 *	BUFFER BACK TO HOST
+	 *	BUFFER BACK TO HOST L2R
+	 *
+	 *****************************/
+	err = clEnqueueReadBuffer(queue, buff_out_l2r, CL_TRUE, 0, size, d_l2r,
+			0, NULL, NULL);
+	if (err < 0) error(err, "clEnqueueReadBuffer");
+
+
+	/*****************************
+	 *
+	 *	BUFFER BACK TO HOST R2L
 	 *
 	 *****************************/
 	err = clEnqueueReadBuffer(queue, buff_out_r2l, CL_TRUE, 0, size, d_r2l,
@@ -314,34 +368,41 @@ int main(void)
 
 	/*****************************
 	 *
-	 *	POST PROCESS
+	 *	PROFILING
 	 *
 	 *****************************/
+	err = clGetEventProfilingInfo(event1, CL_PROFILING_COMMAND_START,
+			sizeof(start), &start, NULL);
+	if (err < 0) error(err, "clGetEventProfilingInfo e1 start");
+	err = clGetEventProfilingInfo(event1, CL_PROFILING_COMMAND_END,
+			sizeof(end), &end, NULL);
+	if (err < 0) error(err, "clGetEventProfilingInfo e1 end");
+
+	total = (end - start) / 1000000.0;
+
+
+	err = clGetEventProfilingInfo(event2, CL_PROFILING_COMMAND_START,
+			sizeof(start), &start, NULL);
+	if (err < 0) error(err, "clGetEventProfilingInfo e2 start");
+
+	err = clGetEventProfilingInfo(event2, CL_PROFILING_COMMAND_END,
+			sizeof(end), &end, NULL);	
+	if (err < 0) error(err, "clGetEventProfilingInfo e2 end");
+	total += (end - start) / 1000000.0;
+
+	printf("ZNCC kernel execution time: %0.3f ms\n", total);
 
 
 	/*****************************
 	 *
-	 *	PROFILING
+	 *	POST PROCESS
 	 *
 	 *****************************/
-#if 0
-	err = clGetEventProfilingInfo(event1, CL_PROFILING_COMMAND_START,
-			sizeof(start), &start, NULL);
-	err = clGetEventProfilingInfo(event1, CL_PROFILING_COMMAND_END,
-			sizeof(end), &end, NULL);
-	total = end - start;
+	cross_checking(d_l2r, d_r2l, size, res);
+	occlusion_filling(res, size);
+	normalize(res, size);
 
-#endif
-	err = clGetEventProfilingInfo(event2, CL_PROFILING_COMMAND_START,
-			sizeof(start), &start, NULL);
-	err = clGetEventProfilingInfo(event2, CL_PROFILING_COMMAND_END,
-			sizeof(end), &end, NULL);
-	total = end - start;
-
-
-	printf("ZNCC kernel execution time: %0.3f ms\n",
-			total / 1000000.0);
-
+	lodepng_encode_file(out, res, w, h, LCT_GREY, 8);
 
 
 	/*****************************
@@ -358,6 +419,7 @@ int main(void)
 	clReleaseCommandQueue(queue);
 	clReleaseContext(context);
 
+	free(res);
 	free(imageL);
 	free(imageR);
 	free(d_l2r);
